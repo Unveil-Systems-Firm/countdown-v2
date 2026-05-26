@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Countdown v8</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+
+  /* The stage is the image. Everything else positions inside it absolutely.
+     Sizing the image by max-width / max-height with auto on the other axis
+     forces the browser to maintain natural aspect ratio (1672 x 941). */
+  .stage {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+
+  .device {
+    display: block;
+    max-width: 96vw;
+    max-height: 96vh;
+    width: auto;
+    height: auto;
+    -webkit-mask-image: radial-gradient(
+      ellipse 58% 72% at center,
+      rgba(0,0,0,1) 0%,
+      rgba(0,0,0,1) 42%,
+      rgba(0,0,0,0.85) 62%,
+      rgba(0,0,0,0.35) 82%,
+      rgba(0,0,0,0) 100%
+    );
+    mask-image: radial-gradient(
+      ellipse 58% 72% at center,
+      rgba(0,0,0,1) 0%,
+      rgba(0,0,0,1) 42%,
+      rgba(0,0,0,0.85) 62%,
+      rgba(0,0,0,0.35) 82%,
+      rgba(0,0,0,0) 100%
+    );
+  }
+
+  /* Digits are absolute-positioned in pixels by JavaScript at runtime.
+     They start hidden until JS measures the image and places them. */
+  .digit-wrap {
+    position: absolute;
+    visibility: hidden;
+  }
+
+  .digit { width: 100%; height: 100%; display: block; }
+
+  .colon {
+    position: absolute;
+    visibility: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .colon .dot {
+    width: 65%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: #ff1a1a;
+    box-shadow: 0 0 4px #ff3030, 0 0 9px rgba(255, 26, 26, 0.7);
+    animation: colonPulse 1s steps(1, end) infinite;
+  }
+
+  @keyframes colonPulse {
+    0%, 49% { opacity: 0.95; }
+    50%, 100% { opacity: 0.35; }
+  }
+
+  .seg {
+    fill: #2a0606;
+    transition: fill 120ms ease-out, filter 120ms ease-out;
+  }
+
+  .seg.on {
+    fill: #ff1a1a;
+    filter: drop-shadow(0 0 1.2px #ff3030) drop-shadow(0 0 2.5px rgba(255, 26, 26, 0.75));
+  }
+
+  .build-tag {
+    position: fixed;
+    bottom: 6px;
+    right: 8px;
+    color: rgba(255, 255, 255, 0.15);
+    font-family: monospace;
+    font-size: 10px;
+    pointer-events: none;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <img class="device" src="countdown_device.png" alt="" width="1672" height="941">
+
+  <div class="digit-wrap" data-position="d0"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+  <div class="digit-wrap" data-position="d1"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+
+  <div class="colon" data-pos="c1"><span class="dot"></span><span class="dot"></span></div>
+
+  <div class="digit-wrap" data-position="h0"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+  <div class="digit-wrap" data-position="h1"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+
+  <div class="colon" data-pos="c2"><span class="dot"></span><span class="dot"></span></div>
+
+  <div class="digit-wrap" data-position="m0"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+  <div class="digit-wrap" data-position="m1"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+
+  <div class="colon" data-pos="c3"><span class="dot"></span><span class="dot"></span></div>
+
+  <div class="digit-wrap" data-position="s0"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+  <div class="digit-wrap" data-position="s1"><svg class="digit" viewBox="0 0 60 100" preserveAspectRatio="none"></svg></div>
+</div>
+
+<div class="build-tag">v8</div>
+
+<script>
+(function () {
+  // Source image natural dimensions
+  var IMG_W = 1672;
+  var IMG_H = 941;
+
+  // Embossed digit positions, measured in source image pixels.
+  // Each digit: [leftPx, topPx, widthPx, heightPx]
+  var DIGIT_BOUNDS = {
+    d0: [422, 385, 75, 120],
+    d1: [531, 385, 74, 120],
+    h0: [654, 385, 75, 120],
+    h1: [758, 385, 75, 120],
+    m0: [886, 385, 75, 120],
+    m1: [990, 385, 74, 120],
+    s0: [1114, 385, 74, 120],
+    s1: [1219, 385, 74, 120]
+  };
+
+  // Colon positions in source image pixels: [leftPx, topPx, widthPx, heightPx]
+  var COLON_BOUNDS = {
+    c1: [617, 410, 20, 70],
+    c2: [849, 410, 20, 70],
+    c3: [1077, 410, 20, 70]
+  };
+
+  // --- Seven-segment SVG paths ---
+  var W = 60, H = 100, pad = 5, thick = 8, gap = 1.5;
+  var midY = H/2, topY = pad, botY = H-pad, leftX = pad, rightX = W-pad;
+
+  function hSeg(x1, x2, y, t) {
+    var h = t/2;
+    return ['M', x1+h, y-h, 'L', x2-h, y-h, 'L', x2, y,
+            'L', x2-h, y+h, 'L', x1+h, y+h, 'L', x1, y, 'Z'].join(' ');
+  }
+  function vSeg(x, y1, y2, t) {
+    var h = t/2;
+    return ['M', x-h, y1+h, 'L', x, y1, 'L', x+h, y1+h,
+            'L', x+h, y2-h, 'L', x, y2, 'L', x-h, y2-h, 'Z'].join(' ');
+  }
+
+  var segPaths = {
+    a: hSeg(leftX+gap, rightX-gap, topY, thick),
+    b: vSeg(rightX, topY+gap, midY-gap/2, thick),
+    c: vSeg(rightX, midY+gap/2, botY-gap, thick),
+    d: hSeg(leftX+gap, rightX-gap, botY, thick),
+    e: vSeg(leftX, midY+gap/2, botY-gap, thick),
+    f: vSeg(leftX, topY+gap, midY-gap/2, thick),
+    g: hSeg(leftX+gap, rightX-gap, midY, thick)
+  };
+
+  var digitMap = {
+    '0':['a','b','c','d','e','f'], '1':['b','c'],
+    '2':['a','b','g','e','d'], '3':['a','b','g','c','d'],
+    '4':['f','g','b','c'], '5':['a','f','g','c','d'],
+    '6':['a','f','g','e','c','d'], '7':['a','b','c'],
+    '8':['a','b','c','d','e','f','g'], '9':['a','b','c','d','f','g']
+  };
+
+  var NS = 'http://www.w3.org/2000/svg';
+  document.querySelectorAll('svg.digit').forEach(function (svg) {
+    Object.keys(segPaths).forEach(function (k) {
+      var p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', segPaths[k]);
+      p.setAttribute('class', 'seg');
+      p.setAttribute('data-seg', k);
+      svg.appendChild(p);
+    });
+  });
+
+  function setDigit(svg, value) {
+    var active = value != null ? digitMap[value] || [] : [];
+    svg.querySelectorAll('.seg').forEach(function (p) {
+      if (active.indexOf(p.getAttribute('data-seg')) !== -1) p.classList.add('on');
+      else p.classList.remove('on');
+    });
+  }
+
+  function pad2(n) {
+    n = Math.max(0, Math.floor(n));
+    if (n > 99) n = 99;
+    return ('0' + n).slice(-2);
+  }
+
+  // --- Runtime positioning based on actual rendered image size ---
+  var img = document.querySelector('.device');
+
+  function positionOverlay() {
+    // Get the actual rendered size of the image in CSS pixels
+    var rect = img.getBoundingClientRect();
+    var renderedW = rect.width;
+    var renderedH = rect.height;
+
+    if (renderedW === 0 || renderedH === 0) return;
+
+    // Scale factors: how many CSS pixels per source-image pixel
+    var sx = renderedW / IMG_W;
+    var sy = renderedH / IMG_H;
+
+    // Position each digit in CSS pixels relative to the stage (= the image)
+    Object.keys(DIGIT_BOUNDS).forEach(function (key) {
+      var b = DIGIT_BOUNDS[key];
+      var el = document.querySelector('.digit-wrap[data-position="' + key + '"]');
+      if (!el) return;
+      el.style.left = (b[0] * sx) + 'px';
+      el.style.top = (b[1] * sy) + 'px';
+      el.style.width = (b[2] * sx) + 'px';
+      el.style.height = (b[3] * sy) + 'px';
+      el.style.visibility = 'visible';
+    });
+
+    Object.keys(COLON_BOUNDS).forEach(function (key) {
+      var b = COLON_BOUNDS[key];
+      var el = document.querySelector('.colon[data-pos="' + key + '"]');
+      if (!el) return;
+      el.style.left = (b[0] * sx) + 'px';
+      el.style.top = (b[1] * sy) + 'px';
+      el.style.width = (b[2] * sx) + 'px';
+      el.style.height = (b[3] * sy) + 'px';
+      el.style.visibility = 'visible';
+    });
+  }
+
+  // Position on load, on resize, and after image loads
+  if (img.complete) {
+    positionOverlay();
+  } else {
+    img.addEventListener('load', positionOverlay);
+  }
+  window.addEventListener('resize', positionOverlay);
+  window.addEventListener('load', positionOverlay);
+
+  // --- Countdown ---
+  var target = new Date(2026, 5, 30, 23, 59, 0, 0);
+
+  function getSvg(p) {
+    return document.querySelector('.digit-wrap[data-position="'+p+'"] svg.digit');
+  }
+
+  var refs = {
+    d0:getSvg('d0'),d1:getSvg('d1'),h0:getSvg('h0'),h1:getSvg('h1'),
+    m0:getSvg('m0'),m1:getSvg('m1'),s0:getSvg('s0'),s1:getSvg('s1')
+  };
+
+  function tick() {
+    var diff = target - new Date();
+    if (diff <= 0) {
+      Object.keys(refs).forEach(function (k) { setDigit(refs[k], '0'); });
+      return;
+    }
+    var t = Math.floor(diff / 1000);
+    var d = pad2(Math.floor(t / 86400));
+    var h = pad2(Math.floor((t % 86400) / 3600));
+    var m = pad2(Math.floor((t % 3600) / 60));
+    var s = pad2(t % 60);
+    setDigit(refs.d0, d[0]); setDigit(refs.d1, d[1]);
+    setDigit(refs.h0, h[0]); setDigit(refs.h1, h[1]);
+    setDigit(refs.m0, m[0]); setDigit(refs.m1, m[1]);
+    setDigit(refs.s0, s[0]); setDigit(refs.s1, s[1]);
+  }
+
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+
+</body>
+</html>
